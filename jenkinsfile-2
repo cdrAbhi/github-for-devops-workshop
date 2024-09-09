@@ -1,0 +1,98 @@
+pipeline {
+    agent any
+    tools {
+        git 'git-linux' // Git tool
+        jdk 'java-linux' // JDK tool
+        // Uncomment if using SonarQube Scanner or Dependency-Check
+        // sonarQubeScanner 'SonarQubeScanner'
+        // dependencyCheck 'dc'
+    }
+    environment {
+        SONAR_HOME = tool "Sonar"
+    }
+    options {
+        ansiColor('xterm')
+    }
+
+
+    stages {
+        stage("Code") {
+            steps {
+                echo "\u001B[34m============= Starting Code Clone =============\u001B[0m" // Blue color
+                git url: "https://github.com/LondheShubham153/node-todo-cicd.git", branch: "master"
+                echo "\u001B[32mCode Cloned Successfully\u001B[0m" // Green color
+            }
+        }
+
+        stage("SonarQube Analysis") {
+            steps {
+                echo "\u001B[34m============= Starting SonarQube Analysis =============\u001B[0m" // Blue color
+                withSonarQubeEnv("Sonar") {
+                    sh "$SONAR_HOME/bin/sonar-scanner -Dsonar.projectName=nodetodo -Dsonar.projectKey=nodetodo -Dsonar.verbose=true -X"
+                }
+                echo "\u001B[32mSonarQube Analysis Done Successfully\u001B[0m" // Green color
+            }
+        }
+
+        stage("SonarQube Quality Gates") {
+            steps {
+                script {
+                    echo "\u001B[34m============= Checking SonarQube Quality Gates =============\u001B[0m" // Blue color
+                    try {
+                        timeout(time: 1, unit: "MINUTES") {
+                            waitForQualityGate abortPipeline: false
+                        }
+                    } catch (Exception e) {
+                        echo "\u001B[31mQuality gate check timed out: ${e.message}\u001B[0m" // Red color
+                    }
+                    echo "\u001B[32mSonarQube Quality Gates Check Done Successfully\u001B[0m" // Green color
+                }
+            }
+        }
+
+        stage("OWASP") {
+            steps {
+                echo "\u001B[34m============= Starting OWASP Dependency Check =============\u001B[0m" // Blue color
+                dependencyCheck additionalArguments: '--scan ./', odcInstallation: 'OWASP'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+                echo "\u001B[32mOWASP Dependency Check Done Successfully\u001B[0m" // Green color
+            }
+        }
+
+        stage("Build & Test") {
+            steps {
+                echo "\u001B[34m============= Starting Build & Test =============\u001B[0m" // Blue color
+                sh 'docker build -t node-app-batch-6:latest .'
+                echo "\u001B[32mCode Built Successfully\u001B[0m" // Green color
+            }
+        }
+
+        stage("Trivy") {
+            steps {
+                echo "\u001B[34m============= Starting Trivy Image Scan =============\u001B[0m" // Blue color
+                sh "trivy image node-app-batch-6"
+                echo "\u001B[32mTrivy Image Scan Done Successfully\u001B[0m" // Green color
+            }
+        }
+
+        stage("Push to Private Docker Hub Repo") {
+            steps {
+                echo "\u001B[34m============= Starting Push to Private Docker Hub Repo =============\u001B[0m" // Blue color
+                withCredentials([usernamePassword(credentialsId: "DokcerHubCred@123", passwordVariable: "dockerPass", usernameVariable: "dockerUser")]) {
+                    sh "docker login -u ${env.dockerUser} -p ${env.dockerPass}"
+                    sh "docker tag node-app-batch-6:latest ${env.dockerUser}/node-app-batch-6:latest"
+                    sh "docker push ${env.dockerUser}/node-app-batch-6:latest"
+                }
+                echo "\u001B[32mSuccessfully Pushed to Private Docker Hub Repo\u001B[0m" // Green color
+            }
+        }
+
+        stage("Deploy") {
+            steps {
+                echo "\u001B[34m============= Starting Deployment =============\u001B[0m" // Blue color
+                sh "docker-compose down && docker-compose up -d"
+                echo "\u001B[32mApp Deployed Successfully\u001B[0m" // Green color
+            }
+        }
+    }
+}
